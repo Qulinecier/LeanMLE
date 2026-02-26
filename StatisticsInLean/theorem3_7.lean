@@ -11,6 +11,34 @@ lemma univ_tendsto_one {ι : Type*}
     Tendsto (fun (_ : ι) => p (Set.univ)) l (nhds 1) :=by
   simp only [MeasureTheory.measure_univ]
   exact tendsto_const_nhds
+
+lemma tendsto_measure_compl_iff {ι : Type*}
+    {Ω : Type*} [MeasurableSpace Ω]
+    {p : Measure Ω} [IsProbabilityMeasure p]
+    {l : Filter ι} {s : ι → Set Ω}
+    (hs : ∀ i, MeasurableSet (s i)) :
+  (Tendsto (fun i => p (s i)) l (nhds 0))
+  ↔ (Tendsto (fun i => p ((s i)ᶜ)) l (nhds 1)):=by
+  have hcompl: ∀ (i: ι), p (Set.univ) - p (s i) = p (s i)ᶜ :=by
+    intro i
+    rw [← MeasureTheory.measure_compl]
+    · exact hs i
+    · exact MeasureTheory.measure_ne_top p (s i)
+  constructor
+  · intro h
+    have hsub := ENNReal.Tendsto.sub (univ_tendsto_one p (l := l)) h
+      (by left; exact ENNReal.one_ne_top)
+    simp_rw [hcompl, tsub_zero] at hsub
+    exact hsub
+  · intro h
+    have hsub := ENNReal.Tendsto.sub (univ_tendsto_one p (l := l)) h
+      (by left; exact ENNReal.one_ne_top)
+    simp_rw [fun (i: ι) => (hcompl i).symm, MeasureTheory.measure_univ, tsub_self] at hsub
+    have hone_sub_p: ∀ (i: ι), 1 - (1 - p (s i)) = p (s i) := by
+      intro i
+      refine ENNReal.sub_sub_cancel ENNReal.one_ne_top MeasureTheory.prob_le_one
+    simp_rw [hone_sub_p] at hsub
+    exact hsub
 end MeasureTheory
 
 open Filter MeasureTheory ProbabilityTheory
@@ -42,13 +70,13 @@ noncomputable def log_Likelihood {Ω : Type*} [MeasurableSpace Ω]
 --   simp only [Set.mem_setOf_eq]
 
 
-lemma exists_IsMaxOn_strict_endpoints
+lemma exists_deriv_eq_zero_of_strict_endpoints
     (g : ℝ → ℝ) (θ₀ : ℝ) (a : ℝ≥0∞)
     (ha : 0 < a) (ha_fin : a < ⊤)
     (hcont : ContinuousOn g (Set.Icc (θ₀ - a.toReal) (θ₀ + a.toReal)))
     (h1 : g θ₀ > g (θ₀ + a.toReal))
     (h2 : g θ₀ > g (θ₀ - a.toReal)) :
-    ∃ θ, edist θ θ₀ < a ∧ (IsMaxOn g (Set.Icc (θ₀ - a.toReal) (θ₀ + a.toReal)) θ) := by
+    ∃ θ, edist θ θ₀ < a ∧ deriv g θ = 0 := by
 
   set L : ℝ := θ₀ - a.toReal
   set U : ℝ := θ₀ + a.toReal
@@ -96,16 +124,21 @@ lemma exists_IsMaxOn_strict_endpoints
   have hθIoo : θ ∈ Set.Ioo L U := by
     exact ⟨lt_of_le_of_ne hθIcc.1 (Ne.symm hθ_ne_L), lt_of_le_of_ne hθIcc.2 hθ_ne_U⟩
 
-  use θ
-  simp only [edist_dist]
-  rw [ENNReal.ofReal_lt_iff_lt_toReal dist_nonneg (LT.lt.ne_top ha_fin)]
 
-  refine ⟨?_, hθmax'⟩
-  have h1' : θ₀ - a.toReal < θ := by simpa [L] using hθIoo.1
-  have h2' : θ < θ₀ + a.toReal := by simpa [U] using hθIoo.2
-  rw [Real.dist_eq]
-  simp only [abs_lt]
-  refine ⟨by linarith, by linarith⟩
+  have hed : edist θ θ₀ < a := by
+    simp only [edist_dist]
+    rw [ENNReal.ofReal_lt_iff_lt_toReal dist_nonneg (LT.lt.ne_top ha_fin)]
+    have : |θ - θ₀| < a.toReal := by
+      have h1' : θ₀ - a.toReal < θ := by simpa [L] using hθIoo.1
+      have h2' : θ < θ₀ + a.toReal := by simpa [U] using hθIoo.2
+      have : -a.toReal < θ - θ₀ ∧ θ - θ₀ < a.toReal := by
+        refine ⟨by linarith, by linarith⟩
+      simpa [abs_lt] using this
+    simpa [Real.dist_eq, abs_sub_comm] using this
+
+  exact ⟨θ, hed, IsLocalMax.deriv_eq_zero (IsMaxOn.isLocalMax
+    (fun y hy => hθmax' ⟨le_of_lt hy.1, le_of_lt hy.2⟩)
+    (IsOpen.mem_nhds isOpen_Ioo hθIoo))⟩
 
 open scoped BigOperators
 open Finset
@@ -359,8 +392,7 @@ theorem exists_consistent_estimator_of_logLikelihood
     Tendsto (fun i =>
       (f θ₀).1 { ω |
         (edist (θ_hat i ω) θ₀ < a) ∧
-        (IsMaxOn (fun θ => (log_Likelihood f X θ i μ ω).toReal)
-        (Set.Icc (θ₀ - a.toReal) (θ₀ + a.toReal)) (θ_hat i ω))})
+        (deriv (fun θ => (log_Likelihood f X θ i μ ω).toReal) (θ_hat i ω) = 0) })
       atTop (𝓝 1) := by
 
   set θU : ℝ := θ₀ + a.toReal
@@ -372,11 +404,11 @@ theorem exists_consistent_estimator_of_logLikelihood
     log_Likelihood f X θ₀ k μ ω > log_Likelihood f X θL k μ ω}
   let A : ℕ → Set Ω := fun k => AU k ∩ AL k
 
-  set P := (f θ₀).1
+  generalize hP : (f θ₀).1 = P at *
   have hAU : Tendsto (fun k => P (AU k)) atTop (𝓝 1) := by
-    simpa [P, θU, AU] using htendsto θU
+    simpa [hP, θU, AU] using htendsto θU
   have hAL : Tendsto (fun k => P (AL k)) atTop (𝓝 1) := by
-    simpa [P, θL, AL] using htendsto θL
+    simpa [hP, θL, AL] using htendsto θL
 
   have hA : Tendsto (fun k => P (A k)) atTop (𝓝 1) := by
     unfold A
@@ -406,10 +438,11 @@ theorem exists_consistent_estimator_of_logLikelihood
       exact hfinite k ω x hx
     exact (ContinuousOn.comp EReal.continuousOn_toReal (hcont k ω)) h'
 
-  let θ_hat := (fun k ω =>
+  refine ⟨
+    (fun k ω =>
       if h : (ω ∈ AU k) ∧ (ω ∈ AL k) then
         Classical.choose
-          (exists_IsMaxOn_strict_endpoints
+          (exists_deriv_eq_zero_of_strict_endpoints
             (g := fun θ => (log_Likelihood f X θ k μ ω).toReal)
             (θ₀ := θ₀) (a := a)
             ha ha_fin
@@ -427,6 +460,7 @@ theorem exists_consistent_estimator_of_logLikelihood
                   (by simpa [AU, θU] using h.1)
               simpa [θU] using this)
             (by
+              -- same endpoint strictness proof as your original (AL side)
               have : (log_Likelihood f X (θ₀ - a.toReal) k μ ω).toReal
                   < (log_Likelihood f X θ₀ k μ ω).toReal := by
                 exact EReal.toReal_lt_toReal
@@ -436,22 +470,65 @@ theorem exists_consistent_estimator_of_logLikelihood
                   (fun a ↦ hfl k θ₀ ω (id (Eq.symm a)))
                   (by simpa [AL, θL] using h.2)
               simpa [θL] using this))
-      else θ₀)
+      else θ₀),
+    ?_⟩
 
-  use θ_hat
-
-  let T : ℕ → Set Ω := fun i =>
-    {ω | edist (θ_hat i ω) θ₀ < a
-    ∧ IsMaxOn (fun θ ↦ (log_Likelihood f X θ i μ ω).toReal) I (θ_hat i ω)}
+  let T : ℕ → Set Ω := fun k =>
+    {ω : Ω |
+      (edist (if h : (ω ∈ AU k) ∧ (ω ∈ AL k) then
+        Classical.choose
+          (exists_deriv_eq_zero_of_strict_endpoints
+            (g := fun θ => (log_Likelihood f X θ k μ ω).toReal)
+            (θ₀ := θ₀) (a := a)
+            ha ha_fin
+            (by
+              have : ContinuousOn (fun θ => (log_Likelihood f X θ k μ ω).toReal) I := hcontR k ω
+              simpa [I] using this)
+            (by
+              exact EReal.toReal_lt_toReal
+                (fun a_1 ↦ hfl k (θ₀ + a.toReal) ω (id (Eq.symm a_1)))
+                (hfs k (θ₀ + a.toReal) ω) (hfs k θ₀ ω)
+                (fun a ↦ hfl k θ₀ ω (id (Eq.symm a)))
+                (by simpa [AU, θU] using h.1))
+            (by
+              exact EReal.toReal_lt_toReal
+                (fun a_1 ↦ hfl k (θ₀ - a.toReal) ω (id (Eq.symm a_1)))
+                (hfs k (θ₀ - a.toReal) ω) (hfs k θ₀ ω)
+                (fun a ↦ hfl k θ₀ ω (id (Eq.symm a)))
+                (by simpa [AL, θL] using h.2)))
+      else θ₀) θ₀ < a)
+      ∧
+      (deriv (fun θ => (log_Likelihood f X θ k μ ω).toReal)
+        (if h : (ω ∈ AU k) ∧ (ω ∈ AL k) then
+          Classical.choose
+            (exists_deriv_eq_zero_of_strict_endpoints
+              (g := fun θ => (log_Likelihood f X θ k μ ω).toReal)
+              (θ₀ := θ₀) (a := a)
+              ha ha_fin
+              (by
+                have : ContinuousOn (fun θ => (log_Likelihood f X θ k μ ω).toReal) I := hcontR k ω
+                simpa [I] using this)
+              (by
+                exact EReal.toReal_lt_toReal
+                  (fun a_1 ↦ hfl k (θ₀ + a.toReal) ω (id (Eq.symm a_1)))
+                  (hfs k (θ₀ + a.toReal) ω) (hfs k θ₀ ω)
+                  (fun a ↦ hfl k θ₀ ω (id (Eq.symm a)))
+                  (by simpa [AU, θU] using h.1))
+              (by
+                exact EReal.toReal_lt_toReal
+                  (fun a_1 ↦ hfl k (θ₀ - a.toReal) ω (id (Eq.symm a_1)))
+                  (hfs k (θ₀ - a.toReal) ω) (hfs k θ₀ ω)
+                  (fun a ↦ hfl k θ₀ ω (id (Eq.symm a)))
+                  (by simpa [AL, θL] using h.2)))
+        else θ₀) = 0) }
 
   have hsubset : ∀ k, A k ⊆ T k := by
     intro k ω hω
-    have h : ω ∈ AU k ∧ ω ∈ AL k := by simpa [A] using hω
-    simp only [T, θ_hat, Set.mem_setOf_eq, h]
-    simp only [and_self, ↓reduceDIte]
-    set hs :=
+    have h : (ω ∈ AU k) ∧ (ω ∈ AL k) := by simpa [A] using hω
+
+    have hs :=
       (Classical.choose_spec
-        (exists_IsMaxOn_strict_endpoints
+        (exists_deriv_eq_zero_of_strict_endpoints
           (g := fun θ => (log_Likelihood f X θ k μ ω).toReal)
           (θ₀ := θ₀) (a := a)
           ha ha_fin
@@ -470,8 +547,8 @@ theorem exists_consistent_estimator_of_logLikelihood
               (hfs k (θ₀ - a.toReal) ω) (hfs k θ₀ ω)
               (fun a ↦ hfl k θ₀ ω (id (Eq.symm a)))
               (by simpa [AL, θL] using h.2))))
-    have h1 := hs.1
-    refine ⟨hs.1, hs.2⟩
+
+    simpa [T, h] using And.intro hs.1 hs.2
 
   have hmono : ∀ k, P (A k) ≤ P (T k) := by
     intro k
@@ -482,135 +559,135 @@ theorem exists_consistent_estimator_of_logLikelihood
       hA (univ_tendsto_one P) (fun k => hmono k)
       (fun k => by simpa using (prob_le_one (μ := P) (s := T k)))
 
-  simpa [P, T] using this
+  simpa [hP, T] using this
 
 
 
 
-theorem exists_tendstoInProbability_of_prob_tendsto_zero {Ω : Type u_1} [MeasurableSpace Ω]
-    (P : Measure Ω) [IsProbabilityMeasure P]
-    (θ₀ : ℝ)
-    (h : ∀ (a : ENNReal), 0 < a → ∃ (θ : ℕ → Ω → ℝ),
-    Tendsto (fun i => P { ω | a ≤ edist (θ i ω) θ₀}) atTop (𝓝 0)) :
-    ∃ (θ_hat: ℕ → Ω → ℝ), ∀ (ε : ℝ≥0∞), 0 < ε →
-      Tendsto (fun i ↦ P {x | ε ≤ edist (θ_hat i x) θ₀}) atTop (𝓝 0):= by
-  -- pick a_n = 1/(n+1)
-  let a : ℕ → ENNReal := fun n => ( (n+1 : ENNReal) )⁻¹
-  have a_pos : ∀ n, 0 < a n := by
-    intro n
-    simp [a]  -- (n+1:ENNReal) ≠ 0, so its inverse is > 0
-  have hex : ∀ n, ∃ θ : ℕ → Ω → ℝ,
-      Tendsto (fun i => P {ω | a n ≤ edist (θ i ω) θ₀}) atTop (𝓝 0) := by
-    intro n
-    exact h (a n) (a_pos n)
+-- theorem exists_tendstoInProbability_of_prob_tendsto_zero {Ω : Type u_1} [MeasurableSpace Ω]
+--     (P : Measure Ω) [IsProbabilityMeasure P]
+--     (θ₀ : ℝ)
+--     (h : ∀ (a : ENNReal), 0 < a → ∃ (θ : ℕ → Ω → ℝ),
+--     Tendsto (fun i => P { ω | a ≤ edist (θ i ω) θ₀}) atTop (𝓝 0)) :
+--     ∃ (θ_hat: ℕ → Ω → ℝ), ∀ (ε : ℝ≥0∞), 0 < ε →
+--       Tendsto (fun i ↦ P {x | ε ≤ edist (θ_hat i x) θ₀}) atTop (𝓝 0):= by
+--   -- pick a_n = 1/(n+1)
+--   let a : ℕ → ENNReal := fun n => ( (n+1 : ENNReal) )⁻¹
+--   have a_pos : ∀ n, 0 < a n := by
+--     intro n
+--     simp [a]  -- (n+1:ENNReal) ≠ 0, so its inverse is > 0
+--   have hex : ∀ n, ∃ θ : ℕ → Ω → ℝ,
+--       Tendsto (fun i => P {ω | a n ≤ edist (θ i ω) θ₀}) atTop (𝓝 0) := by
+--     intro n
+--     exact h (a n) (a_pos n)
 
-  choose θseq hθseq using hex
+--   choose θseq hθseq using hex
 
-  simp_rw [@ENNReal.tendsto_atTop_zero] at hθseq
-
-
-  have hθseq': ∀ (n : ℕ), ∃ N, P
-    {ω | a n ≤ edist (θseq n N ω) θ₀} ≤ ENNReal.ofReal (((2:ℝ)⁻¹)^n):=by
-    intro n
-    obtain ⟨N, hN⟩ := (fun n => hθseq n (ENNReal.ofReal (((2:ℝ)⁻¹)^n))
-      (by simp only [inv_pow, Nat.ofNat_pos,
-      pow_pos, ENNReal.ofReal_inv_of_pos, Nat.ofNat_nonneg, ENNReal.ofReal_pow,
-      ENNReal.ofReal_ofNat, gt_iff_lt, ENNReal.inv_pos, ne_eq, ENNReal.pow_eq_top_iff,
-      ENNReal.ofNat_ne_top, false_and, not_false_eq_true])) n
-    specialize hN N (by simp only [ge_iff_le, le_refl])
-    use N
-
-  choose f hanθP using hθseq'
+--   simp_rw [@ENNReal.tendsto_atTop_zero] at hθseq
 
 
-  let θ_hat : ℕ → Ω → ℝ := fun n => fun ω => θseq n (f n) ω
-  use θ_hat
-  intro b hb
-  rw [@ENNReal.tendsto_atTop_zero]
-  intro ε hε
+--   have hθseq': ∀ (n : ℕ), ∃ N, P
+--     {ω | a n ≤ edist (θseq n N ω) θ₀} ≤ ENNReal.ofReal (((2:ℝ)⁻¹)^n):=by
+--     intro n
+--     obtain ⟨N, hN⟩ := (fun n => hθseq n (ENNReal.ofReal (((2:ℝ)⁻¹)^n))
+--       (by simp only [inv_pow, Nat.ofNat_pos,
+--       pow_pos, ENNReal.ofReal_inv_of_pos, Nat.ofNat_nonneg, ENNReal.ofReal_pow,
+--       ENNReal.ofReal_ofNat, gt_iff_lt, ENNReal.inv_pos, ne_eq, ENNReal.pow_eq_top_iff,
+--       ENNReal.ofNat_ne_top, false_and, not_false_eq_true])) n
+--     specialize hN N (by simp only [ge_iff_le, le_refl])
+--     use N
 
-  obtain ⟨N₁, hN₁, hN₁_pow⟩ : ∃ N₁ > 0, ENNReal.ofReal (((2:ℝ)⁻¹)^N₁) < ε :=by
-    by_cases htop : ε = ∞
-    · use 1
-      rw [htop]
-      simp only [gt_iff_lt, zero_lt_one, pow_one, Nat.ofNat_pos, ENNReal.ofReal_inv_of_pos,
-        ENNReal.ofReal_ofNat, true_and, ENNReal.inv_lt_top, Nat.ofNat_pos]
-    · by_cases h1: ε.toReal < 1
-      · have hε_toReal_pos : (0 : ℝ) < ε.toReal := by
-          change 0 < ε at hε
-          refine (ENNReal.ofReal_lt_iff_lt_toReal (ENNReal.toReal_nonneg (a := 0)) htop).mp ?_
-          simp only [ENNReal.toReal_zero, ENNReal.ofReal_zero]
-          exact hε
-        have hhalf0 : (0 : ℝ) < (2 : ℝ)⁻¹ := by nlinarith
-        have hhalf1 : (2 : ℝ)⁻¹ < 1 := by nlinarith
-        rcases exists_pow_lt_of_lt_one hε_toReal_pos hhalf1 with ⟨n, hn⟩
-        refine ⟨n, ?_⟩
-        have hleft_ne_top : ENNReal.ofReal ((2 : ℝ)⁻¹ ^ n) ≠ ∞ := by
-          simp only [inv_pow, Nat.ofNat_pos, pow_pos, ENNReal.ofReal_inv_of_pos, Nat.ofNat_nonneg,
-            ENNReal.ofReal_pow, ENNReal.ofReal_ofNat, ne_eq, ENNReal.inv_eq_top, pow_eq_zero_iff',
-            OfNat.ofNat_ne_zero, false_and, not_false_eq_true]
-        have hε_ne_top : ε ≠ ∞ := htop
-        have h_toReal :
-            (ENNReal.ofReal (((2 : ℝ)⁻¹) ^ n)).toReal < ε.toReal := by
-          simpa using hn
-        by_cases hn0: n > 0
-        · refine ⟨ hn0, (ENNReal.toReal_lt_toReal hleft_ne_top hε_ne_top).1 h_toReal⟩
-        · have h0 : n = 0 := by exact Nat.eq_zero_of_not_pos hn0
-          exfalso
-          rw [h0] at hn
-          simp only [pow_zero] at hn
-          exact (lt_self_iff_false 1).mp (lt_trans hn h1)
+--   choose f hanθP using hθseq'
 
-      · use 1
-        have h1' := Std.not_lt.mp h1
-        rw [← propext (ENNReal.ofReal_le_iff_le_toReal htop)] at h1'
-        simp only [ENNReal.ofReal_one] at h1'
-        simp only [Nat.ofNat_pos, ENNReal.ofReal_inv_of_pos, ENNReal.ofReal_ofNat, pow_one,
-          gt_iff_lt]
-        have h: (2: ENNReal)⁻¹ < 1 := by exact ENNReal.one_half_lt_one
-        simp only [zero_lt_one, true_and, gt_iff_lt]
-        exact Std.lt_of_lt_of_le h h1'
-  have ⟨N₂, hN₂, hN₂_lt_b⟩  : ∃ N₂ > 0, a N₂ < b :=by
-    unfold a
-    simp only [gt_iff_lt]
-    by_cases htop : b = ⊤
-    · refine ⟨1, by decide, ?_⟩
-      rw [htop]
-      simp only [Nat.cast_one, ENNReal.inv_lt_top, pos_add_self_iff, zero_lt_one]
-    · have hb_toReal : 0 < b.toReal := by
-        simpa using ENNReal.toReal_pos hb.ne' htop
-      rcases exists_nat_one_div_lt hb_toReal with ⟨n, hn⟩
-      refine ⟨n + 1, Nat.succ_pos n, ?_⟩
-      have : ((↑(n + 1) + 1 : ℝ≥0∞)⁻¹).toReal < b.toReal := by
-        have hpos : (0 : ℝ) < (n + 1 : ℝ) := by
-          exact_mod_cast (Nat.succ_pos n)
-        have : (1 : ℝ) / (n + 2) < b.toReal := lt_trans (by simpa
-          [one_div] using (one_div_lt_one_div_of_lt hpos (by linarith))) hn
-        simp only [Nat.cast_add, Nat.cast_one, ENNReal.toReal_inv, gt_iff_lt]
-        rw [add_assoc, one_add_one_eq_two]
-        simpa using this
 
-      exact (ENNReal.toReal_lt_toReal (by simp) htop).1 this
-  let N := max N₁ N₂
-  use N
-  intro n hn
-  have hn_lt_ε : ENNReal.ofReal (((2:ℝ)⁻¹)^n) < ε :=
-    lt_of_le_of_lt (ENNReal.ofReal_mono (pow_le_pow_of_le_one (by norm_num) (by norm_num)
-      (le_trans (le_max_left N₁ N₂) hn))) (by simpa using hN₁_pow)
-  have hbset_aset: { ω | b ≤ edist (θ_hat n ω) θ₀} ⊆ { ω | a n ≤ edist (θ_hat n ω) θ₀} :=by
-    simp only [Set.setOf_subset_setOf]
-    intro ω hω
-    have haNb : a n ≤ b := by
-      have h_aN_le_aN2 : a n ≤ a N₂ :=by
-        unfold a
-        simp only [ENNReal.inv_le_inv]
-        refine (ENNReal.add_le_add_iff_right ENNReal.one_ne_top).mpr ?_
-        exact Nat.cast_le.mpr (le_trans (le_max_right N₁ N₂) hn)
-      exact le_trans h_aN_le_aN2 (le_of_lt hN₂_lt_b)
-    exact le_trans haNb (by simpa using hω)
-  have hP_le: P {ω | b ≤ edist (θ_hat n ω) θ₀} ≤ P { ω | a n ≤ edist (θ_hat n ω) θ₀} := by
-    exact OuterMeasureClass.measure_mono P hbset_aset
-  exact le_of_lt (Std.lt_of_le_of_lt hP_le (lt_of_le_of_lt (hanθP n) hn_lt_ε))
+--   let θ_hat : ℕ → Ω → ℝ := fun n => fun ω => θseq n (f n) ω
+--   use θ_hat
+--   intro b hb
+--   rw [@ENNReal.tendsto_atTop_zero]
+--   intro ε hε
+
+--   obtain ⟨N₁, hN₁, hN₁_pow⟩ : ∃ N₁ > 0, ENNReal.ofReal (((2:ℝ)⁻¹)^N₁) < ε :=by
+--     by_cases htop : ε = ∞
+--     · use 1
+--       rw [htop]
+--       simp only [gt_iff_lt, zero_lt_one, pow_one, Nat.ofNat_pos, ENNReal.ofReal_inv_of_pos,
+--         ENNReal.ofReal_ofNat, true_and, ENNReal.inv_lt_top, Nat.ofNat_pos]
+--     · by_cases h1: ε.toReal < 1
+--       · have hε_toReal_pos : (0 : ℝ) < ε.toReal := by
+--           change 0 < ε at hε
+--           refine (ENNReal.ofReal_lt_iff_lt_toReal (ENNReal.toReal_nonneg (a := 0)) htop).mp ?_
+--           simp only [ENNReal.toReal_zero, ENNReal.ofReal_zero]
+--           exact hε
+--         have hhalf0 : (0 : ℝ) < (2 : ℝ)⁻¹ := by nlinarith
+--         have hhalf1 : (2 : ℝ)⁻¹ < 1 := by nlinarith
+--         rcases exists_pow_lt_of_lt_one hε_toReal_pos hhalf1 with ⟨n, hn⟩
+--         refine ⟨n, ?_⟩
+--         have hleft_ne_top : ENNReal.ofReal ((2 : ℝ)⁻¹ ^ n) ≠ ∞ := by
+--           simp only [inv_pow, Nat.ofNat_pos, pow_pos, ENNReal.ofReal_inv_of_pos, Nat.ofNat_nonneg,
+--             ENNReal.ofReal_pow, ENNReal.ofReal_ofNat, ne_eq, ENNReal.inv_eq_top, pow_eq_zero_iff',
+--             OfNat.ofNat_ne_zero, false_and, not_false_eq_true]
+--         have hε_ne_top : ε ≠ ∞ := htop
+--         have h_toReal :
+--             (ENNReal.ofReal (((2 : ℝ)⁻¹) ^ n)).toReal < ε.toReal := by
+--           simpa using hn
+--         by_cases hn0: n > 0
+--         · refine ⟨ hn0, (ENNReal.toReal_lt_toReal hleft_ne_top hε_ne_top).1 h_toReal⟩
+--         · have h0 : n = 0 := by exact Nat.eq_zero_of_not_pos hn0
+--           exfalso
+--           rw [h0] at hn
+--           simp only [pow_zero] at hn
+--           exact (lt_self_iff_false 1).mp (lt_trans hn h1)
+
+--       · use 1
+--         have h1' := Std.not_lt.mp h1
+--         rw [← propext (ENNReal.ofReal_le_iff_le_toReal htop)] at h1'
+--         simp only [ENNReal.ofReal_one] at h1'
+--         simp only [Nat.ofNat_pos, ENNReal.ofReal_inv_of_pos, ENNReal.ofReal_ofNat, pow_one,
+--           gt_iff_lt]
+--         have h: (2: ENNReal)⁻¹ < 1 := by exact ENNReal.one_half_lt_one
+--         simp only [zero_lt_one, true_and, gt_iff_lt]
+--         exact Std.lt_of_lt_of_le h h1'
+--   have ⟨N₂, hN₂, hN₂_lt_b⟩  : ∃ N₂ > 0, a N₂ < b :=by
+--     unfold a
+--     simp only [gt_iff_lt]
+--     by_cases htop : b = ⊤
+--     · refine ⟨1, by decide, ?_⟩
+--       rw [htop]
+--       simp only [Nat.cast_one, ENNReal.inv_lt_top, pos_add_self_iff, zero_lt_one]
+--     · have hb_toReal : 0 < b.toReal := by
+--         simpa using ENNReal.toReal_pos hb.ne' htop
+--       rcases exists_nat_one_div_lt hb_toReal with ⟨n, hn⟩
+--       refine ⟨n + 1, Nat.succ_pos n, ?_⟩
+--       have : ((↑(n + 1) + 1 : ℝ≥0∞)⁻¹).toReal < b.toReal := by
+--         have hpos : (0 : ℝ) < (n + 1 : ℝ) := by
+--           exact_mod_cast (Nat.succ_pos n)
+--         have : (1 : ℝ) / (n + 2) < b.toReal := lt_trans (by simpa
+--           [one_div] using (one_div_lt_one_div_of_lt hpos (by linarith))) hn
+--         simp only [Nat.cast_add, Nat.cast_one, ENNReal.toReal_inv, gt_iff_lt]
+--         rw [add_assoc, one_add_one_eq_two]
+--         simpa using this
+
+--       exact (ENNReal.toReal_lt_toReal (by simp) htop).1 this
+--   let N := max N₁ N₂
+--   use N
+--   intro n hn
+--   have hn_lt_ε : ENNReal.ofReal (((2:ℝ)⁻¹)^n) < ε :=
+--     lt_of_le_of_lt (ENNReal.ofReal_mono (pow_le_pow_of_le_one (by norm_num) (by norm_num)
+--       (le_trans (le_max_left N₁ N₂) hn))) (by simpa using hN₁_pow)
+--   have hbset_aset: { ω | b ≤ edist (θ_hat n ω) θ₀} ⊆ { ω | a n ≤ edist (θ_hat n ω) θ₀} :=by
+--     simp only [Set.setOf_subset_setOf]
+--     intro ω hω
+--     have haNb : a n ≤ b := by
+--       have h_aN_le_aN2 : a n ≤ a N₂ :=by
+--         unfold a
+--         simp only [ENNReal.inv_le_inv]
+--         refine (ENNReal.add_le_add_iff_right ENNReal.one_ne_top).mpr ?_
+--         exact Nat.cast_le.mpr (le_trans (le_max_right N₁ N₂) hn)
+--       exact le_trans h_aN_le_aN2 (le_of_lt hN₂_lt_b)
+--     exact le_trans haNb (by simpa using hω)
+--   have hP_le: P {ω | b ≤ edist (θ_hat n ω) θ₀} ≤ P { ω | a n ≤ edist (θ_hat n ω) θ₀} := by
+--     exact OuterMeasureClass.measure_mono P hbset_aset
+--   exact le_of_lt (Std.lt_of_le_of_lt hP_le (lt_of_le_of_lt (hanθP n) hn_lt_ε))
 
 
 theorem exists_tendstoInProbability_of_prob_tendsto_zero'
@@ -632,7 +709,161 @@ theorem exists_tendstoInProbability_of_prob_tendsto_zero'
   ∃ (θ_hat: ℕ → Ω → ℝ), ∀ (a : ℝ≥0∞), (0 < a) ∧ (a < ⊤) →
       Tendsto (fun i ↦ (f θ₀).1 {ω |  edist (θ_hat i ω) θ₀ < a ∧
         (deriv (fun θ => (log_Likelihood f X θ i μ ω).toReal) (θ_hat i ω) = 0)}) atTop (𝓝 1) :=by
-  sorry
+  -- pick a_n = 1/(n+1)
+
+  let a : ℕ → ENNReal := fun n => ( (n+1 : ENNReal) )⁻¹
+  have a_pos : ∀ n, 0 < a n := by
+    intro n
+    simp [a]  -- (n+1:ENNReal) ≠ 0, so its inverse is > 0
+  have a_ne_top : ∀ n, a n < ⊤ :=by
+    intro n
+    simp [a]
+  have h :=fun (a : ℝ≥0∞) => fun (ha1: 0 < a) => fun (ha2: a < ⊤) =>
+    exists_consistent_estimator_of_logLikelihood f X θ₀ μ a ha1 ha2 hfs hfl (hcont a) htendsto
+      (hfinite a)
+  set P := (f θ₀).1
+  have hex : ∀ n, ∃ θ_hat : ℕ → Ω → ℝ,
+      Tendsto (fun i => P {ω | edist (θ_hat i ω) θ₀ < a n ∧
+        (deriv (fun θ => (log_Likelihood f X θ i μ ω).toReal) (θ_hat i ω) = 0)}) atTop (𝓝 1) := by
+    intro n
+    exact h (a n) (a_pos n) (a_ne_top n)
+  choose θseq hθseq using hex
+
+  have hθseq1: ∀ (n : ℕ), Tendsto
+    (fun i ↦ P {ω | edist (θseq n i ω) θ₀ < a n})
+    atTop (𝓝 1) := by
+    intro n
+    -- define the two events (just for readability)
+    let A : ℕ → Set Ω :=
+      fun i => {ω | edist (θseq n i ω) θ₀ < a n}
+    let B : ℕ → Set Ω :=
+      fun i => {ω | deriv (fun θ ↦ (log_Likelihood f X θ i μ ω).toReal) (θseq n i ω) = 0}
+
+    -- squeeze between P(A ∧ B) and 1
+    refine
+      tendsto_of_tendsto_of_tendsto_of_le_of_le
+        (hθseq n)                 -- lower function tends to 1
+        (tendsto_const_nhds : Tendsto (fun _ : ℕ => (1 : ENNReal)) atTop (𝓝 1))
+        ?_ ?_
+
+    · -- eventually: P(A ∧ B) ≤ P(A)
+      intro i
+      apply measure_mono
+      intro ω hω
+      exact hω.1
+
+    · -- eventually: P(A) ≤ 1
+      intro i
+      simp only
+      expose_names
+      rw [← isProbabilityMeasure_iff.mp inst_1]
+      apply measure_mono
+      simp only [Set.subset_univ]
+
+  -- have hθseq2: ∀ (n : ℕ), Tendsto
+  --   (fun i ↦ P {ω |a n ≤ edist (θseq n i ω) θ₀ })
+  --   atTop (𝓝 0) := by
+  --   intro n
+  --   rw [tendsto_measure_compl_iff]
+  --   -- abbreviate the “good” event
+  --   let S := fun i => {ω | edist (θseq n i ω) θ₀ < a n}
+  --   ·
+  --     -- first rewrite the target event as a complement
+  --     have hcompl : (fun i => P {ω | a n ≤ edist (θseq n i ω) θ₀}ᶜ)
+  --       = fun i => P ((S i)) := by
+  --       funext i
+  --       apply le_antisymm
+  --       ·
+  --         apply measure_mono
+  --         simp [S]
+  --         intro ω
+  --         simp only [Set.mem_compl_iff, Set.mem_setOf_eq, not_le, imp_self]
+  --       · apply measure_mono
+  --         simp [S]
+  --         intro ω
+  --         simp only [Set.mem_compl_iff, Set.mem_setOf_eq, not_le, imp_self]
+  --     rw [hcompl]
+  --     simp only [S]
+  --     exact hθseq1 n
+  --   · intro i
+
+  --     have hθmeas : Measurable fun ω ↦ θseq n i ω :=by
+
+
+  --     have h_edist : Measurable (fun ω => edist (θseq n i ω) θ₀) := by
+  --       -- measurability of θseq + constant, then edist
+  --       simpa using ( (hθmeas n i).edist measurable_const )
+
+  --     -- now the Prop-valued function is measurable via `.le`
+  --     have : Measurable (fun ω => a n ≤ edist (θseq n i ω) θ₀) := by
+  --       simpa using ( (measurable_const : Measurable (fun ω => a n)).le h_edist )
+
+  --     exact this
+  --     simp only [measurableSet_setOf]
+
+
+    -- now use measure_compl + probability measure to get  P(Sᶜ) = 1 - P(S)
+    -- -- and push the limit through `tsub`
+    -- have : Tendsto (fun i => P ((S i)ᶜ)) atTop (𝓝 0) := by
+    --   rw [← hcompl]
+
+    --   rw [@ENNReal.tendsto_atTop_zero]
+    --   intro ε hε
+
+    --   have hSi : MeasurableSet (S i) := by
+    --     -- this is the only nontrivial side-goal; often `simp [S]` works
+    --     -- if `θseq n i` is measurable (or you have enough measurability lemmas in context)
+    --     simpa [S]  -- try this first; if it fails, tell me the error and your measurability assumptions
+    --   -- now `measure_compl` + `measure_univ = 1` (from `[IsProbabilityMeasure P]`)
+    --   simpa [measure_compl hSi, measure_univ]
+    --   -- convert to 1 - P(S i)
+    --   have htsub :
+    --       (fun i => P ((S i)ᶜ)) = (fun i => (1 : ENNReal) - P (S i)) := by
+    --     funext i
+    --     -- `measure_compl` needs measurability of `S i`
+    --     -- (often `simp [S]` can prove it automatically if `θseq n i` is measurable)
+    --     have hmeas : MeasurableSet (S i) := by
+    --       -- if this line fails in your file, tell me your measurability assumptions on `θseq`
+    --       -- and I'll patch it precisely.
+    --       simpa [S] using (measurableSet_lt
+    --         (measurable_edist
+    --           (measurable_const)  -- θ₀
+    --           (measurable_const)) -- θseq n i ω  (may need to replace with a real measurability lemma)
+    --         measurable_const)
+    --     -- for a probability measure: P(univ)=1
+    --     simpa [measure_compl hmeas, measure_univ]  -- gives `P (S i)ᶜ = 1 - P (S i)`
+    --   -- finish by taking limits
+    --   -- (1 - f i) → (1 - 1) = 0
+    --   -- `tsub`-continuity lemma:
+    --   simpa [htsub] using (tendsto_const_nhds.tsub (hθseq1 n))
+
+    -- -- final rewrite back to your original set
+    -- simpa [hcompl] using this
+
+
+
+  -- simp_rw [@ENNReal.tendsto_atTop_zero] at hθseq2
+
+
+
+  have hθseq': ∀ (n : ℕ), ∃ N, P
+    {ω | a n ≤ edist (θseq n N ω) θ₀} ≤ ENNReal.ofReal (((2:ℝ)⁻¹)^n):=by
+    intro n
+
+    obtain ⟨N, hN⟩ := (fun n => hθseq2 n (ENNReal.ofReal (((2:ℝ)⁻¹)^n))
+      (by simp only [inv_pow, Nat.ofNat_pos,
+      pow_pos, ENNReal.ofReal_inv_of_pos, Nat.ofNat_nonneg, ENNReal.ofReal_pow,
+      ENNReal.ofReal_ofNat, gt_iff_lt, ENNReal.inv_pos, ne_eq, ENNReal.pow_eq_top_iff,
+      ENNReal.ofNat_ne_top, false_and, not_false_eq_true])) n
+    specialize hN N (by simp only [ge_iff_le, le_refl])
+    use N
+
+  -- choose f hanθP using hθseq'
+
+
+  let θ_hat : ℕ → Ω → ℝ := fun n => fun ω => θseq n (f n) ω
+  use θ_hat
+
 
 
 def pdf_support {Ω : Type u_1} {E : Type u_2} [MeasurableSpace E]
