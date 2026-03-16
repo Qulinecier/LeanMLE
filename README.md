@@ -3,21 +3,17 @@
 This project formalizes classical results from likelihood estimator based the Lean theorem prover and the mathlib mathematical library.
 
 ## Main theorems
-Theorem 1. (Formalized) Assumptions (1-4) in Section 3 are assumed. Then there exists an estimator sequence $\left(\hat{\theta}_n\right)_{n \geq 0}$ such that for every radius $a \in(0, \infty)$,
+Theorem 1. (Formalized) Assumptions (1-4) in Section 3 are assumed. Then there exists an estimator sequence $(\hat{\theta}_n)_{n \geq 0}$ such that for every radius $a \in(0, \infty)$,
 
-$$
-P_{\theta_0}\left(\left|\hat{\theta}_n-\theta_0\right|<a \text { and } \ell_n^{\prime}\left(\hat{\theta}_n\right)=0\right) \rightarrow 1 \quad(n \rightarrow \infty)
-$$
 
-where $\ell_n^{\prime}\left(\hat{\theta}_n\right)$ denotes the derivative with respect to $\theta$ of the map $\theta \mapsto \rightarrow \ell_n(\theta ; \omega)$, evaluated at $\theta=\hat{\theta}_n(\omega)$.
+$$P_{\theta_0}(|\hat{\theta}_n-\theta_0|<a \text { and } \ell_n^{\prime}(\hat{\theta}_n)=0) \rightarrow 1 \quad(n \rightarrow \infty)$$
+
+
+where $\ell_n^{\prime}(\hat{\theta}_n)$ denotes the derivative with respect to $\theta$ of the map $\theta \mapsto \rightarrow \ell_n(\theta ; \omega)$, evaluated at $\theta=\hat{\theta}_n(\omega)$.
 
 Theorem 2. (Planned) Suppose that $X_1, \ldots, X_n$ are iid and satisfy the assumptions of Theorem 2.6, with (c) and (d) replaced by the corresponding assumptions on the third (rather than the second) derivative, that is, by the existence of a third derivative satisfying
-$$
-\begin{aligned}
-& \left|\frac{\partial^3}{\partial \theta^3} \log f(x \mid \theta)\right| \leq M(x) \\
-& \qquad \text { for all } x \in A, \quad \theta_0-c<\theta<\theta_0+c
-\end{aligned}
-$$
+
+$$\begin{aligned}& |\frac{\partial^3}{\partial \theta^3} \log f(x \mid \theta)| \leq M(x) \\& \qquad \text { for all } x \in A, \quad \theta_0-c<\theta<\theta_0+c\end{aligned}$$
 with
 
 $$
